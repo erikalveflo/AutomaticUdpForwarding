@@ -12,6 +12,8 @@ This manual configuration step often leads to confusion for the end-user. This d
 
 See [Protocol.md](Protocol.md) for the proposed protocol.
 
+[Join the discussion](https://github.com/erikalveflo/AutomaticUdpForwarding/discussions/1) about this proposal.
+
 ## Test implementations
 
 This repository includes examples and tools that may help when implementing the protocol.
@@ -20,3 +22,6 @@ This repository includes examples and tools that may help when implementing the 
 * [DirtRally2](Emulators/DirtRally2) - emulates telemetry sent by [DiRT Rally 2.0](https://en.wikipedia.org/wiki/Dirt_Rally_2.0) (ExtraData=0)
 * [SimHubPlugin](SimHubPlugin) - an implementation of the proposed protocol as a SimHub plug-in
 * [CSharpExample](CSharpExample) - an implementation of the proposed protocol in C#
+
+### Building
+All code examples are built and tested using Visual Studio 2022 and .NET Framework 4.7.2. They probably work equally well with older versions of .NET (and newer) as well as Visual Studio 2017.
