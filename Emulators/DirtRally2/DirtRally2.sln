@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.8.34525.116
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DirtRally2", "DirtRally2.csproj", "{350A5523-EA63-409A-9854-981C0CDD86A5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{350A5523-EA63-409A-9854-981C0CDD86A5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{350A5523-EA63-409A-9854-981C0CDD86A5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{350A5523-EA63-409A-9854-981C0CDD86A5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{350A5523-EA63-409A-9854-981C0CDD86A5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {FE3ABDA9-EBF7-4282-9788-00E64D2B6A0C}
+	EndGlobalSection
+EndGlobal
