@@ -11,6 +11,9 @@ using System.Runtime.Remoting.Messaging;
 using System.ComponentModel;
 using System.Net.Http.Headers;
 using System.Data;
+using System.Security;
+using System.Text.RegularExpressions;
+using System.Runtime.InteropServices;
 
 namespace CSharpExample
 {
@@ -30,7 +33,8 @@ namespace CSharpExample
 		static readonly TimeSpan SETUP_INTERAL = TimeSpan.FromSeconds(15);
 
 		static UdpClient _client;
-		static List<IPEndPoint> _forwardingTargets = new List<IPEndPoint>();
+		static List<IPEndPoint> _forwardingTargets;
+		static IPEndPoint _mainConsumerEp;
 
 		static bool IsMainConsumer =>
 			_client != null &&
@@ -43,7 +47,8 @@ namespace CSharpExample
 			var exitTask = ReadKey();
 			while (!exitTask.IsCompleted)
 			{
-				Console.WriteLine($"Trying to bind telemetry port {DEFAULT_PORT}");
+				string remoteName = Utils.ProcessNameBoundToUdpPort(DEFAULT_PORT);
+				Console.WriteLine($"Trying to bind telemetry port {DEFAULT_PORT} (bound by '{remoteName}')");
 
 				Task consumerTask;
 				try
@@ -64,6 +69,17 @@ namespace CSharpExample
 
 				if (consumerTask.IsFaulted)
 				{
+					Exception innerEx = consumerTask.Exception;
+					while (innerEx.InnerException != null)
+					{
+						innerEx = innerEx.InnerException;
+					}
+
+					if (innerEx is TryToBindTelemetryPortException)
+					{
+						continue;
+					}
+
 					throw consumerTask.Exception;
 				}
 			}
@@ -95,11 +111,25 @@ namespace CSharpExample
 			Console.WriteLine($"Running as main consumer on port " +
 				$"{((IPEndPoint)_client.Client.LocalEndPoint).Port}");
 
+			_forwardingTargets = new List<IPEndPoint>();
+			_mainConsumerEp = null;
+
 			while (true)
 			{
 				var result = await _client.ReceiveAsync();
-				await PacketReceived(result.Buffer, result.RemoteEndPoint);
-				await ForwardPacket(result.Buffer);
+				var type = IdentifyPacket(result.Buffer);
+				LogPacket(type, result.RemoteEndPoint);
+				switch (type)
+				{
+					case PacketType.Telemetry:
+						await ExtractTelemetry(result.Buffer);
+						await ForwardPacket(result.Buffer);
+						break;
+
+					case PacketType.Setup:
+						await AcceptForwardingRequest(result.RemoteEndPoint);
+						break;
+				}
 			}
 		}
 
@@ -108,6 +138,10 @@ namespace CSharpExample
 			Console.WriteLine($"Running as secondary consumer on port " +
 				$"{((IPEndPoint)_client.Client.LocalEndPoint).Port}");
 
+			_forwardingTargets = null;
+			_mainConsumerEp = new IPEndPoint(IPAddress.Loopback, DEFAULT_PORT);
+
+			DateTime lastAcceptAt = DateTime.MinValue;
 			await SendSetupPacket();
 
 			var receiveTask = _client.ReceiveAsync();
@@ -118,46 +152,81 @@ namespace CSharpExample
 				if (done == receiveTask)
 				{
 					var result = receiveTask.Result;
-					await PacketReceived(result.Buffer, result.RemoteEndPoint);
+					var type = IdentifyPacket(result.Buffer);
+					LogPacket(type, result.RemoteEndPoint);
+					switch (type)
+					{
+						case PacketType.Telemetry:
+							await ExtractTelemetry(result.Buffer);
+							break;
+
+						case PacketType.Accept:
+							lastAcceptAt = DateTime.Now;
+							break;
+					}
 					receiveTask = _client.ReceiveAsync();
 				}
 				else
 				{
+					ThrowIfTelemetryPortIsFree();
+					ThrowIfAcceptTimeout(lastAcceptAt);
 					await SendSetupPacket();
 					setupTask = Task.Delay(SETUP_INTERAL);
 				}
 			}
 		}
 
-		static async Task PacketReceived(byte[] buffer, IPEndPoint remoteEp)
+		enum PacketType { Setup, Accept, Telemetry }
+		static PacketType IdentifyPacket(byte[] buffer)
 		{
 			if (buffer.SequenceEqual(SETUP_PACKET))
 			{
-				if (IsMainConsumer)
-				{
-					Console.WriteLine($"SETUP_PACKET received from {remoteEp}");
-					await AcceptForwardingRequest(remoteEp);
-				}
-				else
-				{
-					Console.WriteLine($"SETUP_PACKET received from {remoteEp} (and ignored)");
-				}
+				return PacketType.Setup;
 			}
 			else if (buffer.SequenceEqual(ACCEPT_PACKET))
 			{
-				if (IsMainConsumer)
-				{
-					Console.WriteLine($"ACCEPT_PACKET received from {remoteEp} (and ignored)");
-				}
-				else
-				{
-					Console.WriteLine($"ACCEPT_PACKET received from {remoteEp}");
-				}
+				return PacketType.Accept;
 			}
 			else
 			{
-				// There is where processing of telemetry would occur
+				return PacketType.Telemetry;
 			}
+		}
+
+		static void LogPacket(PacketType type, IPEndPoint remoteEp)
+		{
+			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+
+			switch (type)
+			{
+				case PacketType.Setup:
+					if (IsMainConsumer)
+					{
+						Console.WriteLine($"SETUP_PACKET received from '{remoteName}' {remoteEp}");
+					}
+					else
+					{
+						Console.WriteLine($"SETUP_PACKET received from '{remoteName}' {remoteEp} (and ignored)");
+					}
+					break;
+
+				case PacketType.Accept:
+					if (IsMainConsumer)
+					{
+						Console.WriteLine($"ACCEPT_PACKET received from '{remoteName}' {remoteEp} (and ignored)");
+					}
+					else
+					{
+						Console.WriteLine($"ACCEPT_PACKET received from '{remoteName}' {remoteEp}");
+					}
+					break;
+			}
+		}
+
+		static async Task ExtractTelemetry(byte[] buffer)
+		{
+			// There is where processing of telemetry would occur
+			await Task.Delay(0);
 		}
 
 		static async Task AcceptForwardingRequest(IPEndPoint remoteEp)
@@ -165,7 +234,9 @@ namespace CSharpExample
 			if (!_forwardingTargets.Contains(remoteEp))
 			{
 				_forwardingTargets.Add(remoteEp);
-				Console.WriteLine($"Forwarding enabled for {remoteEp}");
+
+				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+				Console.WriteLine($"Forwarding enabled for '{remoteName}' {remoteEp}");
 			}
 			await _client.SendAsync(ACCEPT_PACKET, ACCEPT_PACKET.Length, remoteEp);
 		}
@@ -180,9 +251,65 @@ namespace CSharpExample
 
 		static async Task SendSetupPacket()
 		{
-			var mainConsumerEp = new IPEndPoint(IPAddress.Loopback, DEFAULT_PORT);
-			Console.WriteLine($"Sending a SETUP_PACKET to {mainConsumerEp}");
-			await _client.SendAsync(SETUP_PACKET, SETUP_PACKET.Length, mainConsumerEp);
+			var remoteEp = _mainConsumerEp;
+			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+			Console.WriteLine($"Sending a SETUP_PACKET to '{remoteName}' {remoteEp}");
+			await _client.SendAsync(SETUP_PACKET, SETUP_PACKET.Length, remoteEp);
+		}
+
+		static void ThrowIfTelemetryPortIsFree()
+		{
+			var remoteEp = _mainConsumerEp;
+			if (remoteEp.Address == IPAddress.Loopback)
+			{
+				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+				if (remoteName == null)
+				{
+					Console.WriteLine($"No process bound to telemetry port {remoteEp.Port}");
+
+					// We can try to bind the telemetry port right now since the main consumer was
+					// running on the local computer (loopback address) but is no longer and we
+					// trust the Win32 `GetExtendedUdpTable` API.
+					throw new TryToBindTelemetryPortException();
+				}
+			}
+		}
+
+		static void ThrowIfAcceptTimeout(DateTime lastAcceptAt)
+		{
+			if (DateTime.Now - lastAcceptAt < SETUP_INTERAL)
+			{
+				return;
+			}
+
+			Console.WriteLine($"No ACCPET_PACKET received within timeout");
+
+			var remoteEp = _mainConsumerEp;
+			if (remoteEp.Address == IPAddress.Loopback)
+			{
+				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+				if (remoteName == null)
+				{
+					Console.WriteLine($"No process bound to telemetry port {remoteEp.Port}");
+
+					// We can try to bind the telemetry port right now since the main consumer was
+					// running on the local computer (loopback address) but is no longer and we
+					// trust the Win32 `GetExtendedUdpTable` API.
+					throw new TryToBindTelemetryPortException();
+				}
+				else
+				{
+					Console.WriteLine($"Telemetry port {remoteEp.Port} is bound to '{remoteName}'");
+				}
+			}
+
+			Console.WriteLine($"Main consumer does not implement the forwarding protocol?");
+		}
+
+		// This exception is thrown when there is good reason to try to bind the telemetry port and
+		// transition from a secondary consumer to the main consumer.
+		class TryToBindTelemetryPortException : Exception
+		{
 		}
 	}
 }
