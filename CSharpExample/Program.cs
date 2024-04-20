@@ -22,8 +22,17 @@ namespace CSharpExample
 		// Time between setup packets
 		static readonly TimeSpan SETUP_INTERAL = TimeSpan.FromSeconds(15);
 
+		// Maximum interval between SETUP_PACKETs.
+		static readonly TimeSpan SETUP_TIMEOUT = TimeSpan.FromMinutes(1);
+
+		class ForwardingTarget
+		{
+			public IPEndPoint RemoteEp;
+			public DateTime LastSeen;
+		}
+
 		static UdpClient _client;
-		static List<IPEndPoint> _forwardingTargets;
+		static List<ForwardingTarget> _forwardingTargets;
 		static IPEndPoint _mainConsumerEp;
 
 		static bool IsMainConsumer =>
@@ -65,7 +74,7 @@ namespace CSharpExample
 						innerEx = innerEx.InnerException;
 					}
 
-					if (innerEx is TryToBindTelemetryPortException)
+					if (innerEx is BecomeMainConsumerException)
 					{
 						continue;
 					}
@@ -101,24 +110,36 @@ namespace CSharpExample
 			Console.WriteLine($"Running as main consumer on port " +
 				$"{((IPEndPoint)_client.Client.LocalEndPoint).Port}");
 
-			_forwardingTargets = new List<IPEndPoint>();
+			_forwardingTargets = new List<ForwardingTarget>();
 			_mainConsumerEp = null;
 
+			var receiveTask = _client.ReceiveAsync();
+			var periodicTask = Task.Delay(SETUP_INTERAL);
 			while (true)
 			{
-				var result = await _client.ReceiveAsync();
-				var type = IdentifyPacket(result.Buffer);
-				LogPacket(type, result.RemoteEndPoint);
-				switch (type)
+				var done = await Task.WhenAny(receiveTask, periodicTask);
+				if (done == receiveTask)
 				{
-					case PacketType.Telemetry:
-						await ExtractTelemetry(result.Buffer);
-						await ForwardPacket(result.Buffer);
-						break;
+					var result = receiveTask.Result;
+					var type = IdentifyPacket(result.Buffer);
+					LogPacket(type, result.RemoteEndPoint);
+					switch (type)
+					{
+						case PacketType.Telemetry:
+							await ForwardPacket(result.Buffer);
+							await ExtractTelemetry(result.Buffer);
+							break;
 
-					case PacketType.Setup:
-						await AcceptForwardingRequest(result.RemoteEndPoint);
-						break;
+						case PacketType.Setup:
+							await AcceptForwardingRequest(result.RemoteEndPoint);
+							break;
+					}
+					receiveTask = _client.ReceiveAsync();
+				}
+				else
+				{
+					RemoveInactiveForwardingTargets();
+					periodicTask = Task.Delay(SETUP_INTERAL);
 				}
 			}
 		}
@@ -221,21 +242,36 @@ namespace CSharpExample
 
 		static async Task AcceptForwardingRequest(IPEndPoint remoteEp)
 		{
-			if (!_forwardingTargets.Contains(remoteEp))
-			{
-				_forwardingTargets.Add(remoteEp);
+			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
 
-				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+			var target = _forwardingTargets.FirstOrDefault(x => x.RemoteEp.Equals(remoteEp));
+			if (target == null)
+			{
 				Console.WriteLine($"Forwarding enabled for '{remoteName}' {remoteEp}");
+				_forwardingTargets.Add(new ForwardingTarget	{
+					RemoteEp = remoteEp,
+					LastSeen = DateTime.Now
+				});
 			}
+			else
+			{
+				target.LastSeen = DateTime.Now;
+			}
+
+			Console.WriteLine($"Sending a ACCEPT_PACKET to '{remoteName}' {remoteEp}");
 			await _client.SendAsync(ACCEPT_PACKET, ACCEPT_PACKET.Length, remoteEp);
+		}
+
+		static void RemoveInactiveForwardingTargets()
+		{
+			_forwardingTargets.RemoveAll(x => DateTime.Now - x.LastSeen > SETUP_TIMEOUT);
 		}
 
 		static async Task ForwardPacket(byte[] buffer)
 		{
-			foreach (var remoteEp in _forwardingTargets)
+			foreach (var target in _forwardingTargets)
 			{
-				await _client.SendAsync(buffer, buffer.Length, remoteEp);
+				await _client.SendAsync(buffer, buffer.Length, target.RemoteEp);
 			}
 		}
 
@@ -260,7 +296,7 @@ namespace CSharpExample
 					// We can try to bind the telemetry port right now since the main consumer was
 					// running on the local computer (loopback address) but is no longer and we
 					// trust the Win32 `GetExtendedUdpTable` API.
-					throw new TryToBindTelemetryPortException();
+					throw new BecomeMainConsumerException();
 				}
 			}
 		}
@@ -285,7 +321,7 @@ namespace CSharpExample
 					// We can try to bind the telemetry port right now since the main consumer was
 					// running on the local computer (loopback address) but is no longer and we
 					// trust the Win32 `GetExtendedUdpTable` API.
-					throw new TryToBindTelemetryPortException();
+					throw new BecomeMainConsumerException();
 				}
 				else
 				{
@@ -298,7 +334,7 @@ namespace CSharpExample
 
 		// This exception is thrown when there is good reason to try to bind the telemetry port and
 		// transition from a secondary consumer to the main consumer.
-		class TryToBindTelemetryPortException : Exception
+		class BecomeMainConsumerException : Exception
 		{
 		}
 	}
