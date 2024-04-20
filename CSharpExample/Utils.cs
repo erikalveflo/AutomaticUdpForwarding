@@ -9,6 +9,18 @@ namespace CSharpExample
 {
 	internal class Utils
 	{
+		public static string ProcessNameBoundToUdpPort(int port)
+		{
+			try
+			{
+				return ProcessBoundToUdpPort(port)?.ProcessName;
+			}
+			catch
+			{
+				return null;
+			}
+		}
+
 		public static Process ProcessBoundToUdpPort(int port)
 		{
 			ushort nPort = (ushort)IPAddress.HostToNetworkOrder((short)port);
@@ -32,12 +44,10 @@ namespace CSharpExample
 				}
 
 				var table = Marshal.PtrToStructure<MIB_UDPTABLE_OWNER_PID>(tablePtr);
-				var firstRow = tablePtr + (int)Marshal.OffsetOf<MIB_UDPTABLE_OWNER_PID>(
-					nameof(MIB_UDPTABLE_OWNER_PID.table));
-				var rowSize = Marshal.SizeOf(typeof(MIB_UDPROW_OWNER_PID));
+				var firstRowPtr = tablePtr + TableOffset;
 				for (int i = 0; i < table.dwNumEntries; i++)
 				{
-					IntPtr rowPtr = firstRow + rowSize * i;
+					IntPtr rowPtr = firstRowPtr + RowSize * i;
 					var row = Marshal.PtrToStructure<MIB_UDPROW_OWNER_PID>(rowPtr);
 					if (row.dwLocalPort == nPort)
 					{
@@ -53,29 +63,9 @@ namespace CSharpExample
 			return null;
 		}
 
-		public static string ProcessNameBoundToUdpPort(int port)
-		{
-			try
-			{
-				return ProcessBoundToUdpPort(port)?.ProcessName;
-			}
-			catch
-			{
-				return null;
-			}
-		}
-
-		public static bool IsUdpPortBound(int port)
-		{
-			try
-			{
-				return ProcessBoundToUdpPort(port) != null;
-			}
-			catch
-			{
-				return false;
-			}
-		}
+		private static readonly int RowSize = Marshal.SizeOf(typeof(MIB_UDPROW_OWNER_PID));
+		private static readonly int TableOffset =
+			(int)Marshal.OffsetOf<MIB_UDPTABLE_OWNER_PID>(nameof(MIB_UDPTABLE_OWNER_PID.table));
 
 		private const int NO_ERROR = 0;
 		private const int ERROR_INSUFFICIENT_BUFFER = 122;
@@ -110,7 +100,7 @@ namespace CSharpExample
 			   IntPtr pUdpTable,
 			   ref int pdwSize,
 			   bool bOrder,
-			   [MarshalAs(UnmanagedType.U4)] AddressFamily ulAf,
+			   AddressFamily ulAf,
 			   UDP_TABLE_CLASS TableClass,
 			   uint Reserved
 			);
