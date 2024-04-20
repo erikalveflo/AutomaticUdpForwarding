@@ -19,12 +19,12 @@ namespace CSharpExample
 		const int DEFAULT_PORT = 20777;
 
 		// "UdpForwardingRequest" in bytes
-		static readonly byte[] SETUP_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69,
-			0x6E, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74 };
+		static readonly byte[] SETUP_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61,
+			0x72, 0x64, 0x69, 0x6E, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74 };
 
 		// "UdpForwardingEnabled" in bytes
-		static readonly byte[] ACCEPT_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69,
-			0x6E, 0x67, 0x45, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64 };
+		static readonly byte[] ACCEPT_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61,
+			0x72, 0x64, 0x69, 0x6E, 0x67, 0x45, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64 };
 
 		// Time between setup packets
 		static readonly TimeSpan SETUP_INTERAL = TimeSpan.FromSeconds(15);
@@ -49,12 +49,14 @@ namespace CSharpExample
 				try
 				{
 					_client = new UdpClient(DEFAULT_PORT);
+					IgnoreDisconnects(_client);
 					consumerTask = RunAsMainConsumer();
 				}
 				catch (SocketException)
 				{
 					_client = new UdpClient();
 					_client.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
+					IgnoreDisconnects(_client);
 					consumerTask = RunAsSecondaryConsumer();
 				}
 
@@ -62,23 +64,25 @@ namespace CSharpExample
 
 				if (consumerTask.IsFaulted)
 				{
-					var ex = consumerTask.Exception?.InnerException?.InnerException as SocketException;
-					if (ex != null)
-					{
-						// https://learn.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2
-						const int WSAECONNRESET = 10054;
-						if (ex.ErrorCode == WSAECONNRESET)
-						{
-							// Main consumer no longer available. Try to reconnect as main consumer.
-							continue;
-						}
-					}
-
 					throw consumerTask.Exception;
 				}
 			}
 
 			Console.WriteLine($"Shutdown");
+		}
+
+		static void IgnoreDisconnects(UdpClient client)
+		{
+			// UDP sockets on Windows have an interesting issue where `ReceiveAsync()` can thrown
+			// an exception because a remote host refused to receive a previous DGRAM sent on the
+			// same socket. This is nonsense, as UDP sockets are connection less. Configure the
+			// socket to ignore these errors.
+			// https://stackoverflow.com/questions/47779248/why-is-there-a-remote-closed-connection-exception-for-udp-sockets
+			// https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ioctls#sio_udp_connreset-opcode-setting-i-t3
+			uint IOC_IN = 0x80000000;
+			uint IOC_VENDOR = 0x18000000;
+			uint SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
+			client.Client.IOControl((int)SIO_UDP_CONNRESET, new byte[] { 0 }, null);
 		}
 
 		static async Task ReadKey()
