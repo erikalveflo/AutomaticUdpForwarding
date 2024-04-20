@@ -24,4 +24,4 @@ This repository includes examples and tools that may help when implementing the 
 * [CSharpExample](CSharpExample) - an implementation of the proposed protocol in C#
 
 ### Building
-All code examples are built and tested using Visual Studio 2022 and .NET Framework 4.7.2. They probably work equally well with older versions of .NET (and newer) as well as Visual Studio 2017.
+All code examples are built and tested using Visual Studio 2022 and .NET Framework 4.8. They probably work equally well with older versions of .NET (and newer) as well as Visual Studio 2017.
