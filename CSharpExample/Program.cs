@@ -1,9 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Net;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace CSharpExample
 {
@@ -11,245 +16,371 @@ namespace CSharpExample
 	{
 		const int DEFAULT_PORT = 20777;
 
-		// "UdpForwardingRequest" in bytes
-		static readonly byte[] SETUP_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61,
-			0x72, 0x64, 0x69, 0x6E, 0x67, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74 };
-
-		// "UdpForwardingEnabled" in bytes
-		static readonly byte[] ACCEPT_PACKET = { 0x55, 0x64, 0x70, 0x46, 0x6F, 0x72, 0x77, 0x61,
-			0x72, 0x64, 0x69, 0x6E, 0x67, 0x45, 0x6E, 0x61, 0x62, 0x6C, 0x65, 0x64 };
-
-		// Time between setup packets
-		static readonly TimeSpan SETUP_INTERAL = TimeSpan.FromSeconds(15);
-
-		// Maximum interval between SETUP_PACKETs.
-		static readonly TimeSpan SETUP_TIMEOUT = TimeSpan.FromMinutes(1);
-
-		class ForwardingTarget
+		static async Task Main(string[] args)
 		{
-			public IPEndPoint RemoteEp;
-			public DateTime LastSeen;
-		}
+			Console.WriteLine(
+				$"This program simulates a telemetry receiver such as SimHub or Simrig Control Center. It listens " +
+				$"for telemetry on UDP port {DEFAULT_PORT} (used by DiRT Rally 2.0). The purpose of the program is " +
+				$"to validate an automatic UDP forwarding protocol.");
+			Console.WriteLine();
+			Console.WriteLine();
 
-		static UdpClient _client;
-		static List<ForwardingTarget> _forwardingTargets;
-		static IPEndPoint _mainConsumerEp;
+			var receiver = new UdpTelemetryReceiver();
 
-		static bool IsMainConsumer =>
-			_client != null &&
-			((IPEndPoint)_client.Client.LocalEndPoint).Port == DEFAULT_PORT;
-
-		static void Main(string[] args)
-		{
-			Console.WriteLine($"Telemetry receiver");
-
-			var exitTask = ReadKey();
+			var exitTask = Task.Run(() => Console.ReadKey(true));
 			while (!exitTask.IsCompleted)
 			{
-				string remoteName = Utils.ProcessNameBoundToUdpPort(DEFAULT_PORT);
-				Console.WriteLine($"Trying to bind telemetry port {DEFAULT_PORT} (bound by '{remoteName}')");
+				Process portOwner = UdpUtils.ProcessBoundToPort(DEFAULT_PORT);
+				Console.WriteLine(
+					$"Trying to bind telemetry port {DEFAULT_PORT} (bound by '{portOwner?.ProcessName}')");
 
-				Task consumerTask;
-				try
+				if (receiver.TryBind(DEFAULT_PORT))
 				{
-					_client = new UdpClient(DEFAULT_PORT);
-					IgnoreDisconnects(_client);
-					consumerTask = RunAsMainConsumer();
-				}
-				catch (SocketException)
-				{
-					_client = new UdpClient();
-					_client.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
-					IgnoreDisconnects(_client);
-					consumerTask = RunAsSecondaryConsumer();
-				}
+					Console.WriteLine($"Running as main consumer on port {receiver.Port}");
 
-				Task.WaitAny(consumerTask, exitTask);
+					var cancel = new CancellationTokenSource();
+					var forwarder = new UdpForwarder();
+					var accepter = new ForwardingAccepter();
 
-				if (consumerTask.IsFaulted)
-				{
-					Exception innerEx = consumerTask.Exception;
-					while (innerEx.InnerException != null)
+					var receiveTask = receiver.Receive();
+					var acceptTask = accepter.WaitForRequest(cancel.Token);
+					var removeTask = Task.Run(async () =>
 					{
-						innerEx = innerEx.InnerException;
-					}
+						while (true)
+						{
+							cancel.Token.ThrowIfCancellationRequested();
+							forwarder.RemoveInactiveTargets();
+							await Task.Delay(Protocol.REQUEST_INTERVAL, cancel.Token);
+						}
+					});
 
-					if (innerEx is BecomeMainConsumerException)
+					while (!cancel.IsCancellationRequested)
 					{
-						continue;
-					}
+						var done = await Task.WhenAny(receiveTask, acceptTask, removeTask, exitTask);
+						if (done == receiveTask)
+						{
+							var datagram = receiveTask.Result;
+							await forwarder.Forward(datagram, datagram.Length);
+							await ProcessTelemetry(datagram, datagram.Length);
 
-					throw consumerTask.Exception;
+							receiveTask = receiver.Receive();
+						}
+						else if (done == acceptTask)
+						{
+							var request = acceptTask.Result;
+							forwarder.AddOrRenewTarget(new IPEndPoint(IPAddress.Loopback, request.Port));
+
+							acceptTask = accepter.WaitForRequest(cancel.Token);
+						}
+						else if (done == removeTask)
+						{
+							if (removeTask.Exception != null)
+							{
+								throw removeTask.Exception;
+							}
+						}
+						else // cancelTask
+						{
+							cancel.Cancel();
+						}
+					}
+				}
+				else
+				{
+					receiver.BindRandomPort();
+
+					Console.WriteLine($"Running as secondary consumer on port {receiver.Port}");
+
+					var cancel = new CancellationTokenSource();
+					var requester = new ForwardingRequester(DEFAULT_PORT, receiver.Port);
+
+					var receiveTask = receiver.Receive();
+					var requestTask = requester.RequestForwarding(cancel.Token);
+
+					while (!cancel.IsCancellationRequested)
+					{
+						var done = await Task.WhenAny(receiveTask, requestTask, exitTask);
+						if (done == receiveTask)
+						{
+							var datagram = receiveTask.Result;
+							await ProcessTelemetry(datagram, datagram.Length);
+
+							receiveTask = receiver.Receive();
+						}
+						else if (done == requestTask)
+						{
+							var result = requestTask.Result;
+							if (result == ForwardingRequester.Result.NoProcessBoundToPort)
+							{
+								Console.WriteLine("No process bound to telemetry port");
+							}
+
+							requestTask = Task.Run(async () =>
+							{
+								await Task.Delay(Protocol.REQUEST_INTERVAL, cancel.Token);
+								return await requester.RequestForwarding(cancel.Token);
+							});
+						}
+						else // cancelTask
+						{
+							cancel.Cancel();
+						}
+					}
 				}
 			}
 
 			Console.WriteLine($"Shutdown");
 		}
 
-		static void IgnoreDisconnects(UdpClient client)
+		static async Task ProcessTelemetry(byte[] datagram, int numBytes)
 		{
-			// UDP sockets on Windows have an interesting issue where `ReceiveAsync()` can thrown
-			// an exception because a remote host refused to receive a previous DGRAM sent on the
-			// same socket. This is nonsense, as UDP sockets are connection less. Configure the
-			// socket to ignore these errors.
-			// https://stackoverflow.com/questions/47779248/why-is-there-a-remote-closed-connection-exception-for-udp-sockets
-			// https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ioctls#sio_udp_connreset-opcode-setting-i-t3
-			uint IOC_IN = 0x80000000;
-			uint IOC_VENDOR = 0x18000000;
-			uint SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
-			client.Client.IOControl((int)SIO_UDP_CONNRESET, new byte[] { 0 }, null);
-		}
-
-		static async Task ReadKey()
-		{
-			await Task.Run(() => Console.ReadKey(true));
-		}
-
-		static async Task RunAsMainConsumer()
-		{
-			Console.WriteLine($"Running as main consumer on port " +
-				$"{((IPEndPoint)_client.Client.LocalEndPoint).Port}");
-
-			_forwardingTargets = new List<ForwardingTarget>();
-			_mainConsumerEp = null;
-
-			var receiveTask = _client.ReceiveAsync();
-			var periodicTask = Task.Delay(SETUP_INTERAL);
-			while (true)
-			{
-				var done = await Task.WhenAny(receiveTask, periodicTask);
-				if (done == receiveTask)
-				{
-					var result = receiveTask.Result;
-					var type = IdentifyPacket(result.Buffer);
-					LogPacket(type, result.RemoteEndPoint);
-					switch (type)
-					{
-						case PacketType.Telemetry:
-							await ForwardPacket(result.Buffer);
-							await ExtractTelemetry(result.Buffer);
-							break;
-
-						case PacketType.Setup:
-							await AcceptForwardingRequest(result.RemoteEndPoint);
-							break;
-					}
-					receiveTask = _client.ReceiveAsync();
-				}
-				else
-				{
-					RemoveInactiveForwardingTargets();
-					periodicTask = Task.Delay(SETUP_INTERAL);
-				}
-			}
-		}
-
-		static async Task RunAsSecondaryConsumer()
-		{
-			Console.WriteLine($"Running as secondary consumer on port " +
-				$"{((IPEndPoint)_client.Client.LocalEndPoint).Port}");
-
-			_forwardingTargets = null;
-			_mainConsumerEp = new IPEndPoint(IPAddress.Loopback, DEFAULT_PORT);
-
-			DateTime lastAcceptAt = DateTime.MinValue;
-			await SendSetupPacket();
-
-			var receiveTask = _client.ReceiveAsync();
-			var setupTask = Task.Delay(SETUP_INTERAL);
-			while (true)
-			{
-				var done = await Task.WhenAny(receiveTask, setupTask);
-				if (done == receiveTask)
-				{
-					var result = receiveTask.Result;
-					var type = IdentifyPacket(result.Buffer);
-					LogPacket(type, result.RemoteEndPoint);
-					switch (type)
-					{
-						case PacketType.Telemetry:
-							await ExtractTelemetry(result.Buffer);
-							break;
-
-						case PacketType.Accept:
-							lastAcceptAt = DateTime.Now;
-							break;
-					}
-					receiveTask = _client.ReceiveAsync();
-				}
-				else
-				{
-					ThrowIfTelemetryPortIsFree();
-					ThrowIfAcceptTimeout(lastAcceptAt);
-					await SendSetupPacket();
-					setupTask = Task.Delay(SETUP_INTERAL);
-				}
-			}
-		}
-
-		enum PacketType { Setup, Accept, Telemetry }
-		static PacketType IdentifyPacket(byte[] buffer)
-		{
-			if (buffer.SequenceEqual(SETUP_PACKET))
-			{
-				return PacketType.Setup;
-			}
-			else if (buffer.SequenceEqual(ACCEPT_PACKET))
-			{
-				return PacketType.Accept;
-			}
-			else
-			{
-				return PacketType.Telemetry;
-			}
-		}
-
-		static void LogPacket(PacketType type, IPEndPoint remoteEp)
-		{
-			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
-
-			switch (type)
-			{
-				case PacketType.Setup:
-					if (IsMainConsumer)
-					{
-						Console.WriteLine($"SETUP_PACKET received from '{remoteName}' {remoteEp}");
-					}
-					else
-					{
-						Console.WriteLine($"SETUP_PACKET received from '{remoteName}' {remoteEp} (and ignored)");
-					}
-					break;
-
-				case PacketType.Accept:
-					if (IsMainConsumer)
-					{
-						Console.WriteLine($"ACCEPT_PACKET received from '{remoteName}' {remoteEp} (and ignored)");
-					}
-					else
-					{
-						Console.WriteLine($"ACCEPT_PACKET received from '{remoteName}' {remoteEp}");
-					}
-					break;
-			}
-		}
-
-		static async Task ExtractTelemetry(byte[] buffer)
-		{
-			// There is where processing of telemetry would occur
+			// There is where processing of telemetry would occur.
 			await Task.Delay(0);
 		}
+	}
 
-		static async Task AcceptForwardingRequest(IPEndPoint remoteEp)
+	internal class ForwardingRequester
+	{
+		private int _telemetryPort;
+		private int _listeningPort;
+
+		public ForwardingRequester(int telemetryPort, int listeningPort)
 		{
-			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
+			_telemetryPort = telemetryPort;
+			_listeningPort = listeningPort;
+		}
 
-			var target = _forwardingTargets.FirstOrDefault(x => x.RemoteEp.Equals(remoteEp));
+		public enum Result
+		{
+			Success,
+			NoProcessBoundToPort,
+			OtherError,
+			Timeout,
+			Cancelled,
+		}
+
+		public async Task<Result> RequestForwarding(CancellationToken ct)
+		{
+			try
+			{
+				var portOwner = UdpUtils.ProcessBoundToPort(_telemetryPort);
+				if (portOwner == null)
+				{
+					return Result.NoProcessBoundToPort;
+				}
+
+				string pipeName = Protocol.GetPipeName(portOwner);
+				Console.WriteLine($"Opening pipe: {pipeName}");
+
+				using (var timeout = new CancellationTokenSource(Protocol.PIPE_TIMEOUT))
+				using (var timeoutOrCancel = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token, ct))
+				using (var pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out,
+					PipeOptions.Asynchronous))
+				{
+					await pipe.ConnectAsync(timeoutOrCancel.Token);
+
+					var request = new Protocol.RequestPacket
+					{
+						Magic = Protocol.REQUEST_MAGIC,
+						Port = _listeningPort,
+					};
+					var datagram = UdpUtils.StructToBytes(request);
+
+					Console.WriteLine($"Requesting UDP forwarding to: {_listeningPort}");
+					await pipe.WriteAsync(datagram, 0, datagram.Length, timeoutOrCancel.Token);
+					await pipe.FlushAsync(timeoutOrCancel.Token);
+				}
+
+				Console.WriteLine("Success");
+				return Result.Success;
+			}
+			catch (IOException ex)
+			{
+				Console.WriteLine($"Failed to request forwarding: {ex}");
+				return Result.OtherError;
+			}
+			catch (TimeoutException)
+			{
+				Console.WriteLine($"Request timed out");
+				return Result.Timeout;
+			}
+			catch (Exception ex) when (ex is OperationCanceledException || ex is TaskCanceledException)
+			{
+				if (!ct.IsCancellationRequested)
+				{
+					Console.WriteLine($"Request timed out");
+					return Result.Timeout;
+				}
+				return Result.Cancelled;
+			}
+		}
+	}
+
+	internal class ForwardingAccepter
+	{
+		public ForwardingAccepter()
+		{
+		}
+
+		public async Task<Protocol.RequestPacket> WaitForRequest(CancellationToken ct)
+		{
+			var pipeName = Protocol.GetPipeName(Process.GetCurrentProcess());
+			var packet = new byte[Marshal.SizeOf<Protocol.RequestPacket>()];
+
+			while (true)
+			{
+				ct.ThrowIfCancellationRequested();
+
+				Console.WriteLine($"Opening pipe: {pipeName}");
+				using (var pipe = new NamedPipeServerStream(pipeName, PipeDirection.In, 1,
+					PipeTransmissionMode.Message, PipeOptions.Asynchronous))
+				{
+					try
+					{
+						await pipe.WaitForConnectionAsync(ct);
+						Console.WriteLine("Pipe connected");
+					}
+					catch (IOException)
+					{
+						continue;
+					}
+
+					try
+					{
+						var readTask = pipe.ReadAsync(packet, 0, packet.Length, ct);
+						int read = await TaskUtils.WithTimeout(readTask, Protocol.PIPE_TIMEOUT);
+						if (read != packet.Length)
+						{
+							Console.WriteLine("Invalid request: Packet size mismatch.");
+							continue;
+						}
+					}
+					catch (TimeoutException)
+					{
+						Console.WriteLine("Invalid request: Timeout.");
+						continue;
+					}
+					catch (Exception ex) when (ex is OperationCanceledException || ex is TaskCanceledException)
+					{
+						Console.WriteLine("Invalid request: Timeout.");
+						continue;
+					}
+
+					var request = UdpUtils.BytesToStruct<Protocol.RequestPacket>(packet);
+					if (request.Magic != Protocol.REQUEST_MAGIC)
+					{
+						Console.WriteLine("Invalid request: Magic value mismatch.");
+						continue;
+					}
+
+					if (request.Port < 0 || request.Port > UInt16.MaxValue)
+					{
+						Console.WriteLine("Invalid request: Invalid port number.");
+						continue;
+					}
+
+					Console.WriteLine($"Forwarding requested to: {request.Port}");
+					return request;
+				}
+			}
+		}
+	}
+
+	internal class UdpTelemetryReceiver : IDisposable
+	{
+		private UdpClient _client;
+
+		public int Port => ((IPEndPoint)_client?.Client?.LocalEndPoint)?.Port ?? 0;
+
+		public UdpTelemetryReceiver()
+		{
+			_client = null;
+		}
+
+		public void Dispose()
+		{
+			_client?.Dispose();
+		}
+
+		public bool TryBind(int port)
+		{
+			if (_client != null && _client.Client.IsBound)
+			{
+				_client.Dispose();
+				_client = null;
+			}
+
+			if (_client == null)
+			{
+				_client = new UdpClient();
+				UdpUtils.IgnoreDisconnects(_client);
+			}
+
+			try
+			{
+				_client.Client.Bind(new IPEndPoint(IPAddress.Any, port));
+				return true;
+			}
+			catch (SocketException)
+			{
+				return false;
+			}
+		}
+
+		public void BindRandomPort()
+		{
+			TryBind(0);
+		}
+
+		public async Task<byte[]> Receive()
+		{
+			var result = await _client.ReceiveAsync();
+			return result.Buffer;
+		}
+	}
+
+	internal class UdpForwarder : IDisposable
+	{
+		private class ForwardingTarget
+		{
+			public IPEndPoint RemoteEp;
+			public DateTime LastSeen;
+		}
+
+		private List<ForwardingTarget> _targets;
+		private UdpClient _client;
+
+		public UdpForwarder()
+		{
+			_targets = new List<ForwardingTarget>();
+			_client = new UdpClient(new IPEndPoint(IPAddress.Any, 0)); // Any port will do
+			UdpUtils.IgnoreDisconnects(_client);
+		}
+
+		public void Dispose()
+		{
+			_client?.Dispose();
+		}
+
+		public async Task Forward(byte[] datagram, int numBytes)
+		{
+			foreach (var target in _targets)
+			{
+				await _client.SendAsync(datagram, numBytes, target.RemoteEp);
+			}
+		}
+
+		public void AddOrRenewTarget(IPEndPoint targetEp)
+		{
+			var targetName = UdpUtils.ProcessNameBoundToPort(targetEp.Port);
+
+			var target = _targets.FirstOrDefault(x => x.RemoteEp.Equals(targetEp));
 			if (target == null)
 			{
-				Console.WriteLine($"Forwarding enabled for '{remoteName}' {remoteEp}");
-				_forwardingTargets.Add(new ForwardingTarget	{
-					RemoteEp = remoteEp,
+				Console.WriteLine($"Forwarding enabled for '{targetName}' {targetEp}");
+				_targets.Add(new ForwardingTarget
+				{
+					RemoteEp = targetEp,
 					LastSeen = DateTime.Now
 				});
 			}
@@ -257,85 +388,11 @@ namespace CSharpExample
 			{
 				target.LastSeen = DateTime.Now;
 			}
-
-			Console.WriteLine($"Sending a ACCEPT_PACKET to '{remoteName}' {remoteEp}");
-			await _client.SendAsync(ACCEPT_PACKET, ACCEPT_PACKET.Length, remoteEp);
 		}
 
-		static void RemoveInactiveForwardingTargets()
+		public void RemoveInactiveTargets()
 		{
-			_forwardingTargets.RemoveAll(x => DateTime.Now - x.LastSeen > SETUP_TIMEOUT);
-		}
-
-		static async Task ForwardPacket(byte[] buffer)
-		{
-			foreach (var target in _forwardingTargets)
-			{
-				await _client.SendAsync(buffer, buffer.Length, target.RemoteEp);
-			}
-		}
-
-		static async Task SendSetupPacket()
-		{
-			var remoteEp = _mainConsumerEp;
-			string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
-			Console.WriteLine($"Sending a SETUP_PACKET to '{remoteName}' {remoteEp}");
-			await _client.SendAsync(SETUP_PACKET, SETUP_PACKET.Length, remoteEp);
-		}
-
-		static void ThrowIfTelemetryPortIsFree()
-		{
-			var remoteEp = _mainConsumerEp;
-			if (remoteEp.Address == IPAddress.Loopback)
-			{
-				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
-				if (remoteName == null)
-				{
-					Console.WriteLine($"No process bound to telemetry port {remoteEp.Port}");
-
-					// We can try to bind the telemetry port right now since the main consumer was
-					// running on the local computer (loopback address) but is no longer and we
-					// trust the Win32 `GetExtendedUdpTable` API.
-					throw new BecomeMainConsumerException();
-				}
-			}
-		}
-
-		static void ThrowIfAcceptTimeout(DateTime lastAcceptAt)
-		{
-			if (DateTime.Now - lastAcceptAt < SETUP_INTERAL)
-			{
-				return;
-			}
-
-			Console.WriteLine($"No ACCPET_PACKET received within timeout");
-
-			var remoteEp = _mainConsumerEp;
-			if (remoteEp.Address == IPAddress.Loopback)
-			{
-				string remoteName = Utils.ProcessNameBoundToUdpPort(remoteEp.Port);
-				if (remoteName == null)
-				{
-					Console.WriteLine($"No process bound to telemetry port {remoteEp.Port}");
-
-					// We can try to bind the telemetry port right now since the main consumer was
-					// running on the local computer (loopback address) but is no longer and we
-					// trust the Win32 `GetExtendedUdpTable` API.
-					throw new BecomeMainConsumerException();
-				}
-				else
-				{
-					Console.WriteLine($"Telemetry port {remoteEp.Port} is bound to '{remoteName}'");
-				}
-			}
-
-			Console.WriteLine($"Main consumer does not implement the forwarding protocol?");
-		}
-
-		// This exception is thrown when there is good reason to try to bind the telemetry port and
-		// transition from a secondary consumer to the main consumer.
-		class BecomeMainConsumerException : Exception
-		{
+			_targets.RemoveAll(x => DateTime.Now - x.LastSeen > Protocol.REGISTRATION_TIMEOUT);
 		}
 	}
 }

@@ -1,8 +1,8 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace DirtRally2
 {
@@ -20,7 +20,7 @@ namespace DirtRally2
 
 		static void Main(string[] args)
 		{
-			Console.WriteLine($"F1 2017 UDP Telemetry Emulator");
+			Console.WriteLine($"DiRT Rally 2.0 UDP Telemetry Emulator");
 
 			Console.WriteLine($"Staring UDP client");
 			_client = new UdpClient();

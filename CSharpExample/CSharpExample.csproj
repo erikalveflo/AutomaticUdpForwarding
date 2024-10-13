@@ -44,7 +44,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Utils.cs" />
+    <Compile Include="Protocol.cs" />
+    <Compile Include="TaskUtils.cs" />
+    <Compile Include="UdpUtils.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
