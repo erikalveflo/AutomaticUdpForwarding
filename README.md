@@ -20,7 +20,6 @@ This repository includes examples and tools that may help when implementing the 
 
 * [F1_2017](Emulators/F1_2017) - emulates telemetry sent by [F1 2017](https://en.wikipedia.org/wiki/F1_2017_(video_game))
 * [DirtRally2](Emulators/DirtRally2) - emulates telemetry sent by [DiRT Rally 2.0](https://en.wikipedia.org/wiki/Dirt_Rally_2.0) (ExtraData=0)
-* [SimHubPlugin](SimHubPlugin) - an implementation of the proposed protocol as a SimHub plug-in
 * [CSharpExample](CSharpExample) - an implementation of the proposed protocol in C#
 
 ### Building
