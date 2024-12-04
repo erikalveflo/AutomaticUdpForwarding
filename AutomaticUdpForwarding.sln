@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DirtRally2", "Emulators\Dir
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "F1_2017", "Emulators\F1_2017\F1_2017.csproj", "{D499BD04-F104-408B-AB57-8A2666276345}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Emulators", "Emulators", "{080E0926-A355-4B69-A2F9-C85122D3F910}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,5 +32,9 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{350A5523-EA63-409A-9854-981C0CDD86A5} = {080E0926-A355-4B69-A2F9-C85122D3F910}
+		{D499BD04-F104-408B-AB57-8A2666276345} = {080E0926-A355-4B69-A2F9-C85122D3F910}
 	EndGlobalSection
 EndGlobal

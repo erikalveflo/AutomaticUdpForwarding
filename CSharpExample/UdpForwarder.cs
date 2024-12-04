@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CSharpExample
@@ -32,35 +33,56 @@ namespace CSharpExample
 
 		public async Task Forward(byte[] datagram, int numBytes)
 		{
-			foreach (var target in _targets)
+			Task[] tasks;
+			lock (_targets)
 			{
-				await _client.SendAsync(datagram, numBytes, target.RemoteEp);
+				tasks = _targets
+					.Select(t => _client.SendAsync(datagram, numBytes, t.RemoteEp))
+					.ToArray();
 			}
+			await Task.WhenAll(tasks);
 		}
 
 		public void AddOrRenewTarget(IPEndPoint targetEp)
 		{
 			var targetName = UdpUtils.ProcessNameBoundToPort(targetEp.Port);
 
-			var target = _targets.FirstOrDefault(x => x.RemoteEp.Equals(targetEp));
-			if (target == null)
+			lock (_targets)
 			{
-				Console.WriteLine($"Forwarding enabled for '{targetName}' {targetEp}");
-				_targets.Add(new ForwardingTarget
+				var target = _targets.FirstOrDefault(x => x.RemoteEp.Equals(targetEp));
+				if (target == null)
 				{
-					RemoteEp = targetEp,
-					LastSeen = DateTime.Now
-				});
-			}
-			else
-			{
-				target.LastSeen = DateTime.Now;
+					Console.WriteLine($"Forwarding enabled for '{targetName}' {targetEp}");
+					_targets.Add(new ForwardingTarget
+					{
+						RemoteEp = targetEp,
+						LastSeen = DateTime.Now
+					});
+				}
+				else
+				{
+					target.LastSeen = DateTime.Now;
+				}
 			}
 		}
 
 		public void RemoveInactiveTargets()
 		{
-			_targets.RemoveAll(x => DateTime.Now - x.LastSeen > Protocol.REGISTRATION_TIMEOUT);
+			lock (_targets)
+			{
+				_targets.RemoveAll(x => DateTime.Now - x.LastSeen > Protocol.REGISTRATION_TIMEOUT);
+			}
+		}
+
+		public async Task PeriodicallyRemoveInactiveTargetsAsync(CancellationToken ct)
+		{
+			while (true)
+			{
+				ct.ThrowIfCancellationRequested();
+
+				RemoveInactiveTargets();
+				await Task.Delay(Protocol.REQUEST_INTERVAL, ct);
+			}
 		}
 	}
 }

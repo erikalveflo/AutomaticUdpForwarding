@@ -25,53 +25,41 @@ namespace CSharpExample
 			while (!exitTask.IsCompleted)
 			{
 				Process portOwner = UdpUtils.ProcessBoundToPort(DEFAULT_PORT);
-				Console.WriteLine(
-					$"Trying to bind telemetry port {DEFAULT_PORT} (bound by '{portOwner?.ProcessName}')");
+				Console.WriteLine($"Trying to bind telemetry port {DEFAULT_PORT}");
 
 				if (receiver.TryBind(DEFAULT_PORT))
 				{
 					Console.WriteLine($"Running as main consumer on port {receiver.Port}");
 
 					var cancel = new CancellationTokenSource();
-					var forwarder = new UdpForwarder();
 					var accepter = new ForwardingAccepter();
+					var forwarder = new UdpForwarder();
 
-					var receiveTask = receiver.Receive();
-					var acceptTask = accepter.WaitForRequest(cancel.Token);
-					var removeTask = Task.Run(async () =>
-					{
-						while (true)
-						{
-							cancel.Token.ThrowIfCancellationRequested();
-							forwarder.RemoveInactiveTargets();
-							await Task.Delay(Protocol.REQUEST_INTERVAL, cancel.Token);
-						}
-					});
+					var receiveTask = receiver.ReceiveAsync(cancel.Token);
+					var acceptTask = accepter.WaitForRequestAsync(cancel.Token);
+					var removeTask = forwarder.PeriodicallyRemoveInactiveTargetsAsync(cancel.Token);
 
 					while (!cancel.IsCancellationRequested)
 					{
 						var done = await Task.WhenAny(receiveTask, acceptTask, removeTask, exitTask);
 						if (done == receiveTask)
 						{
-							var datagram = receiveTask.Result;
+							var datagram = await receiveTask; // Propagates exception
 							await forwarder.Forward(datagram, datagram.Length);
 							await ProcessTelemetry(datagram, datagram.Length);
 
-							receiveTask = receiver.Receive();
+							receiveTask = receiver.ReceiveAsync(cancel.Token);
 						}
 						else if (done == acceptTask)
 						{
-							var request = acceptTask.Result;
-							forwarder.AddOrRenewTarget(new IPEndPoint(IPAddress.Loopback, request.Port));
+							var remoteEp = await acceptTask; // Propagates exception
+							forwarder.AddOrRenewTarget(remoteEp);
 
-							acceptTask = accepter.WaitForRequest(cancel.Token);
+							acceptTask = accepter.WaitForRequestAsync(cancel.Token);
 						}
 						else if (done == removeTask)
 						{
-							if (removeTask.Exception != null)
-							{
-								throw removeTask.Exception;
-							}
+							await removeTask; // Propagates exception
 						}
 						else // cancelTask
 						{
@@ -81,6 +69,8 @@ namespace CSharpExample
 				}
 				else
 				{
+					Console.WriteLine($"Telemetry port bound by process {portOwner?.Id} '{portOwner?.ProcessName}'");
+
 					receiver.BindRandomPort();
 
 					Console.WriteLine($"Running as secondary consumer on port {receiver.Port}");
@@ -88,32 +78,31 @@ namespace CSharpExample
 					var cancel = new CancellationTokenSource();
 					var requester = new ForwardingRequester(DEFAULT_PORT, receiver.Port);
 
-					var receiveTask = receiver.Receive();
-					var requestTask = requester.RequestForwarding(cancel.Token);
+					var receiveTask = receiver.ReceiveAsync(cancel.Token);
+					var requestTask = requester.RequestForwardingAsync(cancel.Token);
 
 					while (!cancel.IsCancellationRequested)
 					{
 						var done = await Task.WhenAny(receiveTask, requestTask, exitTask);
 						if (done == receiveTask)
 						{
-							var datagram = receiveTask.Result;
+							var datagram = await receiveTask; // Propagates exception
 							await ProcessTelemetry(datagram, datagram.Length);
 
-							receiveTask = receiver.Receive();
+							receiveTask = receiver.ReceiveAsync(cancel.Token);
 						}
 						else if (done == requestTask)
 						{
-							var result = requestTask.Result;
+							var result = await requestTask; // Propagates exception
 							if (result == ForwardingRequester.Result.NoProcessBoundToPort)
 							{
 								Console.WriteLine("No process bound to telemetry port");
+								cancel.Cancel(); // Attempt to upgrade to main consumer
 							}
-
-							requestTask = Task.Run(async () =>
+							else
 							{
-								await Task.Delay(Protocol.REQUEST_INTERVAL, cancel.Token);
-								return await requester.RequestForwarding(cancel.Token);
-							});
+								requestTask = requester.DelayedRequestForwardingAsync(cancel.Token);
+							}
 						}
 						else // cancelTask
 						{

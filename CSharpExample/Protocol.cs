@@ -11,9 +11,10 @@ namespace CSharpExample
 		public static readonly TimeSpan PIPE_TIMEOUT = TimeSpan.FromMilliseconds(500);
 
 		public const int REQUEST_MAGIC = 0x3634B30B;
+		public const int RESPONSE_MAGIC = 0x255BB85;
 
 		[StructLayout(LayoutKind.Sequential)]
-		public struct RequestPacket
+		public struct RequestAndReponse
 		{
 			[MarshalAs(UnmanagedType.I4)] public int Magic;
 			[MarshalAs(UnmanagedType.I4)] public int Port;

@@ -20,5 +20,15 @@ namespace CSharpExample
 				throw new TimeoutException();
 			}
 		}
+
+		public static async Task WithTimeout(Task task, TimeSpan timeout)
+		{
+			async Task<int> WithIntResult(Task t)
+			{
+				await t;
+				return 0;
+			}
+			await WithTimeout(WithIntResult(task), timeout);
+		}
 	}
 }

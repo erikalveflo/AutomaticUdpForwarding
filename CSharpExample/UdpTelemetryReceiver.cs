@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace CSharpExample
@@ -51,9 +52,20 @@ namespace CSharpExample
 			TryBind(0);
 		}
 
-		public async Task<byte[]> Receive()
+		public async Task<byte[]> ReceiveAsync(CancellationToken ct)
 		{
-			var result = await _client.ReceiveAsync();
+			var receiveTask = _client.ReceiveAsync();
+
+			using (var delayCts = new CancellationTokenSource())
+			using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, delayCts.Token))
+			{
+				var delayTask = Task.Delay(Timeout.Infinite, linkedCts.Token);
+				await Task.WhenAny(receiveTask, delayTask);
+				ct.ThrowIfCancellationRequested();
+				delayCts.Cancel(); // Cancel delayTask
+			}
+
+			var result = await receiveTask;
 			return result.Buffer;
 		}
 	}
