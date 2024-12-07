@@ -10,11 +10,11 @@ using static CSharpExample.Protocol;
 
 namespace CSharpExample
 {
-	internal class ForwardingAccepter
+	internal class ForwardingRequestAccepter
 	{
 		private int _telemetryPort;
 
-		public ForwardingAccepter(int telemetryPort)
+		public ForwardingRequestAccepter(int telemetryPort)
 		{
 			_telemetryPort = telemetryPort;
 		}
@@ -61,7 +61,7 @@ namespace CSharpExample
 						continue;
 					}
 
-					var request = UdpUtils.BytesToStruct<Request>(readBuffer);
+					var request = MarshalUtils.BytesToStruct<Request>(readBuffer);
 					if (request.Magic != REQUEST_MAGIC)
 					{
 						Console.WriteLine("Invalid request: Magic value mismatch.");

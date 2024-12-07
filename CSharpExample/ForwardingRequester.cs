@@ -49,7 +49,7 @@ namespace CSharpExample
 					var connectTask = pipe.ConnectAsync(ct);
 					await TaskUtils.WithTimeout(connectTask, PIPE_TIMEOUT);
 
-					var request = UdpUtils.StructToBytes(new Request
+					var request = MarshalUtils.StructToBytes(new Request
 					{
 						Magic = REQUEST_MAGIC,
 						Port = _listeningPort,
@@ -67,13 +67,6 @@ namespace CSharpExample
 				Console.WriteLine($"Failed to request forwarding: {ex.GetType().Name}: {ex.Message}");
 				return Result.Error;
 			}
-		}
-
-		public async Task<Result> DelayedRequestForwardingAsync(CancellationToken ct)
-		{
-			await Task.Delay(REQUEST_INTERVAL, ct);
-			ct.ThrowIfCancellationRequested();
-			return await RequestForwardingAsync(ct);
 		}
 	}
 }

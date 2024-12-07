@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,6 +9,7 @@ namespace CSharpExample
 	{
 		static async Task Main(string[] args)
 		{
+			// We are pretending to receive telemetry from one of the F1 games (or DiRT Rally 2.0)
 			const int TELEMETRY_PORT = 20777;
 
 			Console.WriteLine(
@@ -19,25 +19,24 @@ namespace CSharpExample
 			Console.WriteLine();
 			Console.WriteLine();
 
-			var receiver = new UdpTelemetryReceiver();
-
 			var exitTask = Task.Run(() => Console.ReadKey(true));
 			while (!exitTask.IsCompleted)
 			{
 				Process portOwner = UdpUtils.ProcessBoundToPort(TELEMETRY_PORT);
 				Console.WriteLine($"Trying to bind telemetry port {TELEMETRY_PORT}");
 
+				var receiver = new UdpTelemetryReceiver();
 				if (receiver.TryBind(TELEMETRY_PORT))
 				{
 					Console.WriteLine($"Running as main consumer on port {receiver.Port}");
 
 					var cancel = new CancellationTokenSource();
-					var accepter = new ForwardingAccepter(TELEMETRY_PORT);
 					var forwarder = new UdpForwarder();
+					var accepter = new ForwardingRequestAccepter(TELEMETRY_PORT);
 
 					var receiveTask = receiver.ReceiveAsync(cancel.Token);
 					var acceptTask = accepter.WaitForRequestAsync(cancel.Token);
-					var removeTask = forwarder.PeriodicallyRemoveInactiveTargetsAsync(cancel.Token);
+					var removeTask = Task.CompletedTask;
 
 					while (!cancel.IsCancellationRequested)
 					{
@@ -45,6 +44,7 @@ namespace CSharpExample
 						if (done == receiveTask)
 						{
 							var datagram = await receiveTask; // Propagates exception
+
 							await forwarder.Forward(datagram, datagram.Length);
 							await ProcessTelemetry(datagram, datagram.Length);
 
@@ -53,6 +53,7 @@ namespace CSharpExample
 						else if (done == acceptTask)
 						{
 							var remoteEp = await acceptTask; // Propagates exception
+
 							forwarder.AddOrRenewTarget(remoteEp);
 
 							acceptTask = accepter.WaitForRequestAsync(cancel.Token);
@@ -60,6 +61,12 @@ namespace CSharpExample
 						else if (done == removeTask)
 						{
 							await removeTask; // Propagates exception
+
+							removeTask = Task.Run(async () =>
+							{
+								forwarder.RemoveInactiveTargets();
+								await Task.Delay(Protocol.REGISTRATION_TIMEOUT, cancel.Token);
+							});
 						}
 						else // cancelTask
 						{
@@ -104,7 +111,11 @@ namespace CSharpExample
 							}
 							else
 							{
-								requestTask = requester.DelayedRequestForwardingAsync(cancel.Token);
+								requestTask = Task.Run(async () =>
+								{
+									await Task.Delay(Protocol.REGISTRATION_TIMEOUT, cancel.Token);
+									return await requester.RequestForwardingAsync(cancel.Token);
+								});
 							}
 						}
 						else // cancelTask

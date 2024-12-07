@@ -44,8 +44,9 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="ForwardingAccepter.cs" />
+    <Compile Include="ForwardingRequestAccepter.cs" />
     <Compile Include="ForwardingRequester.cs" />
+    <Compile Include="MarshalUtils.cs" />
     <Compile Include="Protocol.cs" />
     <Compile Include="TaskUtils.cs" />
     <Compile Include="UdpForwarder.cs" />
@@ -55,6 +56,12 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\Protocol.md">
+      <Link>Properties\Protocol.md</Link>
+    </None>
+    <None Include="..\README.md">
+      <Link>Properties\README.md</Link>
+    </None>
     <None Include="App.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

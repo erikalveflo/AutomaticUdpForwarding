@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
 using System.Threading.Tasks;
 
 namespace CSharpExample
@@ -71,17 +70,6 @@ namespace CSharpExample
 			lock (_targets)
 			{
 				_targets.RemoveAll(x => DateTime.Now - x.LastSeen > Protocol.REGISTRATION_TIMEOUT);
-			}
-		}
-
-		public async Task PeriodicallyRemoveInactiveTargetsAsync(CancellationToken ct)
-		{
-			while (true)
-			{
-				ct.ThrowIfCancellationRequested();
-
-				RemoveInactiveTargets();
-				await Task.Delay(Protocol.REQUEST_INTERVAL, ct);
 			}
 		}
 	}
