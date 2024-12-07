@@ -8,14 +8,14 @@ namespace CSharpExample
 {
 	internal class Program
 	{
-		const int DEFAULT_PORT = 20777;
-
 		static async Task Main(string[] args)
 		{
+			const int TELEMETRY_PORT = 20777;
+
 			Console.WriteLine(
 				$"This program simulates a telemetry receiver such as SimHub or Simrig Control Center. It listens " +
-				$"for telemetry on UDP port {DEFAULT_PORT} (used by DiRT Rally 2.0). The purpose of the program is " +
-				$"to validate an automatic UDP forwarding protocol.");
+				$"for telemetry on UDP port {TELEMETRY_PORT} (used by DiRT Rally 2.0). The purpose of the program " +
+				$"is to validate an automatic UDP forwarding protocol.");
 			Console.WriteLine();
 			Console.WriteLine();
 
@@ -24,15 +24,15 @@ namespace CSharpExample
 			var exitTask = Task.Run(() => Console.ReadKey(true));
 			while (!exitTask.IsCompleted)
 			{
-				Process portOwner = UdpUtils.ProcessBoundToPort(DEFAULT_PORT);
-				Console.WriteLine($"Trying to bind telemetry port {DEFAULT_PORT}");
+				Process portOwner = UdpUtils.ProcessBoundToPort(TELEMETRY_PORT);
+				Console.WriteLine($"Trying to bind telemetry port {TELEMETRY_PORT}");
 
-				if (receiver.TryBind(DEFAULT_PORT))
+				if (receiver.TryBind(TELEMETRY_PORT))
 				{
 					Console.WriteLine($"Running as main consumer on port {receiver.Port}");
 
 					var cancel = new CancellationTokenSource();
-					var accepter = new ForwardingAccepter();
+					var accepter = new ForwardingAccepter(TELEMETRY_PORT);
 					var forwarder = new UdpForwarder();
 
 					var receiveTask = receiver.ReceiveAsync(cancel.Token);
@@ -76,7 +76,7 @@ namespace CSharpExample
 					Console.WriteLine($"Running as secondary consumer on port {receiver.Port}");
 
 					var cancel = new CancellationTokenSource();
-					var requester = new ForwardingRequester(DEFAULT_PORT, receiver.Port);
+					var requester = new ForwardingRequester(TELEMETRY_PORT, receiver.Port);
 
 					var receiveTask = receiver.ReceiveAsync(cancel.Token);
 					var requestTask = requester.RequestForwardingAsync(cancel.Token);
@@ -97,7 +97,10 @@ namespace CSharpExample
 							if (result == ForwardingRequester.Result.NoProcessBoundToPort)
 							{
 								Console.WriteLine("No process bound to telemetry port");
-								cancel.Cancel(); // Attempt to upgrade to main consumer
+
+								// This is when we can attempt to become the main consumer by binding the telemetry
+								// port.
+								//cancel.Cancel();
 							}
 							else
 							{

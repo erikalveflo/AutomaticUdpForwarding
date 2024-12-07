@@ -11,19 +11,18 @@ namespace CSharpExample
 		public static readonly TimeSpan PIPE_TIMEOUT = TimeSpan.FromMilliseconds(500);
 
 		public const int REQUEST_MAGIC = 0x3634B30B;
-		public const int RESPONSE_MAGIC = 0x255BB85;
 
 		[StructLayout(LayoutKind.Sequential)]
-		public struct RequestAndReponse
+		public struct Request
 		{
 			[MarshalAs(UnmanagedType.I4)] public int Magic;
 			[MarshalAs(UnmanagedType.I4)] public int Port;
 		}
 
-		// Gets the pipe name used by the ForwardingAcceptor at process `p`.
-		public static string GetPipeName(Process p)
+		// Gets the pipe name used by the ForwardingAcceptor in `process`.
+		public static string GetPipeName(Process process, int port)
 		{
-			return $@"\\.\pipe\3aa45f85-9c74-41e0-b560-bd6b9e456275\{p.Id}";
+			return $@"\\.\pipe\3aa45f85-9c74-41e0-b560-bd6b9e456275\{process.Id}\{port}";
 		}
 	}
 }
