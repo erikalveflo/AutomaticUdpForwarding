@@ -17,10 +17,13 @@ namespace CSharpExample
 			// socket to ignore these errors.
 			// https://stackoverflow.com/questions/47779248/why-is-there-a-remote-closed-connection-exception-for-udp-sockets
 			// https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ioctls#sio_udp_connreset-opcode-setting-i-t3
-			uint IOC_IN = 0x80000000;
-			uint IOC_VENDOR = 0x18000000;
-			uint SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
-			client.Client.IOControl((int)SIO_UDP_CONNRESET, new byte[] { 0 }, null);
+			const uint IOC_IN = 0x80000000;
+			const uint IOC_VENDOR = 0x18000000;
+			const uint SIO_UDP_CONNRESET = IOC_IN | IOC_VENDOR | 12;
+			unchecked
+			{
+				client.Client.IOControl((int)SIO_UDP_CONNRESET, new byte[] { 0 }, null);
+			}
 		}
 
 		public static string ProcessNameBoundToPort(int port)
