@@ -68,9 +68,13 @@ namespace CSharpExample
 								await Task.Delay(Protocol.REGISTRATION_TIMEOUT, cancel.Token);
 							});
 						}
-						else // cancelTask
+						else if (done == exitTask)
 						{
 							cancel.Cancel();
+						}
+						else
+						{
+							throw new NotImplementedException(); // Unreachable
 						}
 					}
 				}
@@ -118,9 +122,13 @@ namespace CSharpExample
 								});
 							}
 						}
-						else // cancelTask
+						else if (done == exitTask)
 						{
 							cancel.Cancel();
+						}
+						else
+						{
+							throw new NotImplementedException(); // Unreachable
 						}
 					}
 				}
