@@ -1,4 +1,7 @@
-﻿using System;
+﻿//
+// Copyright (c) 2024 Erik Alveflo
+//
+using System;
 using System.Runtime.InteropServices;
 
 namespace CSharpExample

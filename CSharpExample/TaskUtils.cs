@@ -1,4 +1,7 @@
-﻿using System;
+﻿//
+// Copyright (c) 2024 Erik Alveflo
+//
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 

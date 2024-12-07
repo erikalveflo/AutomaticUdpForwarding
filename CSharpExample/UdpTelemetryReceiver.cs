@@ -1,4 +1,7 @@
-﻿using System;
+﻿//
+// Copyright (c) 2024 Erik Alveflo
+//
+using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
