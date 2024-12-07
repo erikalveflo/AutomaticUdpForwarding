@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
+using System.Runtime.InteropServices;
 
 namespace CSharpExample
 {
@@ -7,6 +8,12 @@ namespace CSharpExample
 		public static T BytesToStruct<T>(byte[] bytes)
 			where T : struct
 		{
+			if (bytes.Length != Marshal.SizeOf<T>())
+			{
+				throw new ArgumentException("Size mismatch between byte buffer and T. Cannot convert a byte buffer " +
+					"to struct of type T when byte buffer is not the same length as sizeof(T).", nameof(bytes));
+			}
+
 			GCHandle handle = GCHandle.Alloc(bytes, GCHandleType.Pinned);
 			try
 			{
