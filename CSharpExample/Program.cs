@@ -114,16 +114,14 @@ namespace CSharpExample
 
 								// This is when we can attempt to become the main consumer by binding the telemetry
 								// port.
-								//cancel.Cancel();
+								cancel.Cancel();
 							}
-							else
+
+							requestTask = Task.Run(async () =>
 							{
-								requestTask = Task.Run(async () =>
-								{
-									await Task.Delay(Protocol.REGISTRATION_TIMEOUT, cancel.Token);
-									return await requester.RequestForwardingAsync(cancel.Token);
-								});
-							}
+								await Task.Delay(Protocol.REQUEST_INTERVAL, cancel.Token);
+								return await requester.RequestForwardingAsync(cancel.Token);
+							});
 						}
 						else if (done == exitTask)
 						{
