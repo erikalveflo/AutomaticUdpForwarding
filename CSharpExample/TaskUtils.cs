@@ -11,15 +11,15 @@ namespace CSharpExample
 	{
 		public static async Task<T> WithTimeout<T>(Task<T> task, TimeSpan timeout)
 		{
-			using (var cts = new CancellationTokenSource(timeout))
+			using (var delayCts = new CancellationTokenSource(timeout))
 			{
-				var delayTask = Task.Delay(Timeout.Infinite, cts.Token);
+				var delayTask = Task.Delay(Timeout.Infinite, delayCts.Token);
 				var completedTask = await Task.WhenAny(task, delayTask);
 				if (completedTask == task)
 				{
-					return await task;
+					delayCts.Cancel(); // Cancel `delayTask` to avoid leak
+					return await task; // Finishes immediately
 				}
-				cts.Cancel(); // Cancel delayTask
 				throw new TimeoutException();
 			}
 		}
