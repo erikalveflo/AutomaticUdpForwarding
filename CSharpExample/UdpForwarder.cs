@@ -47,7 +47,7 @@ namespace CSharpExample
 
 		public void AddOrRenewTarget(IPEndPoint targetEp)
 		{
-			var targetName = UdpUtils.ProcessNameBoundToPort(targetEp.Port);
+			var targetName = UdpUtils.GetProcessNameBoundToPort(targetEp.Port);
 
 			lock (_targets)
 			{

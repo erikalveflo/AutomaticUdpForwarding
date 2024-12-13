@@ -29,12 +29,12 @@ namespace CSharpExample
 			}
 		}
 
-		public static string ProcessNameBoundToPort(int port)
+		public static string GetProcessNameBoundToPort(int port)
 		{
-			return ProcessBoundToPort(port)?.ProcessName;
+			return GetProcessBoundToPort(port)?.ProcessName;
 		}
 
-		public static Process ProcessBoundToPort(int port)
+		public static Process GetProcessBoundToPort(int port)
 		{
 			try
 			{

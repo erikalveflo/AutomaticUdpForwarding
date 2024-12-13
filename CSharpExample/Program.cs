@@ -25,7 +25,7 @@ namespace CSharpExample
 			var exitTask = Task.Run(() => Console.ReadKey(true));
 			while (!exitTask.IsCompleted)
 			{
-				Process portOwner = UdpUtils.ProcessBoundToPort(TELEMETRY_PORT);
+				Process portOwner = UdpUtils.GetProcessBoundToPort(TELEMETRY_PORT);
 				Console.WriteLine($"Trying to bind telemetry port {TELEMETRY_PORT}");
 
 				var receiver = new UdpTelemetryReceiver();

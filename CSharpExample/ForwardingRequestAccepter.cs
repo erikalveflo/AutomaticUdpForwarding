@@ -77,7 +77,7 @@ namespace CSharpExample
 						continue;
 					}
 
-					var targetName = UdpUtils.ProcessNameBoundToPort(request.Port);
+					var targetName = UdpUtils.GetProcessNameBoundToPort(request.Port);
 					var targetEp = new IPEndPoint(IPAddress.Loopback, request.Port);
 
 					Console.WriteLine($"Forwarding requested by '{targetName}' {targetEp}");

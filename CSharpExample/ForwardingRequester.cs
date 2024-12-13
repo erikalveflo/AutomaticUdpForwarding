@@ -34,7 +34,7 @@ namespace CSharpExample
 		{
 			try
 			{
-				var portOwner = UdpUtils.ProcessBoundToPort(_telemetryPort);
+				var portOwner = UdpUtils.GetProcessBoundToPort(_telemetryPort);
 				if (portOwner == null)
 				{
 					return Result.NoProcessBoundToPort;
