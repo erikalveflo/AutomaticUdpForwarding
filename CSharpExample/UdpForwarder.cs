@@ -42,7 +42,7 @@ namespace CSharpExample
 					.Select(t => _client.SendAsync(datagram, numBytes, t.RemoteEp))
 					.ToArray();
 			}
-			await Task.WhenAll(tasks);
+			await Task.WhenAll(tasks); // Forward to all targets in parallel
 		}
 
 		public void AddOrRenewTarget(IPEndPoint targetEp)

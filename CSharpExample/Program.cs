@@ -17,8 +17,8 @@ namespace CSharpExample
 
 			Console.WriteLine(
 				$"This program simulates a telemetry receiver such as SimHub or Simrig Control Center. It listens " +
-				$"for telemetry on UDP port {TELEMETRY_PORT} (used by DiRT Rally 2.0). The purpose of the program " +
-				$"is to validate an automatic UDP forwarding protocol.");
+				$"for telemetry on UDP port {TELEMETRY_PORT} (used by F1 and DiRT Rally 2.0). The purpose of the " +
+				$"program is to validate an automatic UDP forwarding protocol.");
 			Console.WriteLine();
 			Console.WriteLine();
 

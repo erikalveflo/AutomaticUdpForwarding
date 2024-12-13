@@ -40,8 +40,8 @@ namespace CSharpExample
 					return Result.NoProcessBoundToPort;
 				}
 
-				Console.WriteLine($"Requesting that {portOwner.Id} '{portOwner.ProcessName}' forward port " +
-					$"{_telemetryPort}");
+				Console.WriteLine($"Requesting that {portOwner.Id} '{portOwner.ProcessName}' enable forwarding for " +
+					$"port {_telemetryPort} to {_listeningPort}");
 
 				string pipeName = GetPipeName(portOwner, _telemetryPort);
 				Console.WriteLine($"Connecting to pipe: {pipeName}");
